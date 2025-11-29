@@ -3834,7 +3834,7 @@ ${'='.repeat(80)}
                     .style("stroke-width", "1px")
                     .style("pointer-events", "none");
                 
-                // Add island text (centered in the rectangle)
+                // Add island/agent text (centered in the rectangle)
                 islandNodes.append("text")
                     .attr("x", 0)
                     .attr("y", -15)  // Adjusted for larger rectangle
@@ -3844,7 +3844,13 @@ ${'='.repeat(80)}
                     .style("font-weight", "bold")
                     .style("fill", "white")
                     .style("pointer-events", "none")
-                    .text(d => `I${d.data.island_idx}`);
+                    .text(d => {
+                        const an = d.data.metadata?.agent_name;
+                        if (an) {
+                            return an.slice(0, 3);
+                        }
+                        return `I${d.data.island_idx}`;
+                    });
 
                 if (window.pendingNodeSelectionId) {
                     const nodeIdToSelect = window.pendingNodeSelectionId;

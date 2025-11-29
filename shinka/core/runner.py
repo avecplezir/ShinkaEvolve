@@ -62,6 +62,11 @@ class EvolutionConfig:
     novelty_llm_models: Optional[List[str]] = None
     novelty_llm_kwargs: dict = field(default_factory=lambda: {})
     use_text_feedback: bool = False
+    agent_full_context_mode: bool = False
+    agent_include_parent_context: bool = True
+    agent_num_agents: int = 1
+    agent_leaderboard_correct_first: bool = False
+    agent_local_leaderboard_rounds: int = 5
 
 
 @dataclass
@@ -250,6 +255,8 @@ class EvolutionRunner:
         self.running_jobs: List[RunningJob] = []
         self.best_program_id: Optional[str] = None
         self.next_generation_to_submit = 0
+        # Shared agent dialogue history (used by AgentEvolutionRunner)
+        self.agent_msg_history: List[dict] = []
 
         if resuming_run:
             self.completed_generations = self.db.last_iteration + 1

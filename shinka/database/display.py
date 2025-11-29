@@ -75,6 +75,13 @@ class DatabaseDisplay:
             overflow="ellipsis",
         )
         table.add_column(
+            "Agent",
+            style="cyan",
+            justify="left",
+            width=12,
+            overflow="ellipsis",
+        )
+        table.add_column(
             "Type",
             style="yellow",
             justify="left",
@@ -134,6 +141,11 @@ class DatabaseDisplay:
             patch_type_raw = "[dim]N/A[/dim]"
         patch_type = str(patch_type_raw)
 
+        agent_name_raw = metadata.get("agent_name", "[dim]N/A[/dim]")
+        if agent_name_raw is None:
+            agent_name_raw = "[dim]N/A[/dim]"
+        agent_name = str(agent_name_raw)[:12]
+
         # Add the data row
         island_display = (
             f"I-{program.island_idx}" if program.island_idx is not None else "N/A"
@@ -144,6 +156,7 @@ class DatabaseDisplay:
             status_display,
             score_display,
             patch_name,
+            agent_name,
             patch_type,
             f"{program.complexity:.1f}",
             cost_display,
@@ -377,6 +390,7 @@ class DatabaseDisplay:
             width=32,
             overflow="ellipsis",
         )
+        highlight_table.add_column("Agent", style="cyan", justify="left", width=12, overflow="ellipsis")
         highlight_table.add_column("Type", style="cyan", justify="left", width=8)
         highlight_table.add_column("Island", style="magenta", justify="center", width=8)
         highlight_table.add_column("Children", style="blue", justify="right", width=8)
@@ -447,6 +461,11 @@ class DatabaseDisplay:
             timestamp = time.localtime(prog.timestamp)
             ts_str = time.strftime("%Y-%m-%d %H:%M:%S", timestamp)
 
+            agent_name = "unknown"
+            if prog.metadata:
+                agent_name = prog.metadata.get("agent_name", agent_name)
+            agent_name = str(agent_name)[:12]
+
             # Rank styling - top 3 get special colors
             if rank == 1:
                 rank_str = "[bold gold1]#1[/bold gold1]"
@@ -470,6 +489,7 @@ class DatabaseDisplay:
                 score_str,
                 f"{prog.complexity:.1f}",
                 prog.metadata.get("patch_name", "N/A")[:30],
+                agent_name,
                 prog.metadata.get("patch_type", "N/A")[:6],
                 island_display,
                 str(children_count),

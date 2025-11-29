@@ -3,7 +3,7 @@ import os
 import datetime as dt
 from time import perf_counter
 import sys
-from shinka.core import EvolutionRunner, EvolutionConfig
+from shinka.core import EvolutionRunner, EvolutionConfig, AgentEvolutionRunner
 from shinka.database import DatabaseConfig
 from shinka.launch import LocalJobConfig
 
@@ -43,6 +43,9 @@ search_task_sys_msg = (
 llm_models = []
 if os.getenv("GEMINI_API_KEY"):
     llm_models.append("gemini-2.5-flash")
+    # llm_models.append("gemini-2.5-flash-lite")
+    # llm_models.append("gemini-2.5-pro")
+    # llm_models.append("gemini-2.0-flash")
 if os.getenv("OPENAI_API_KEY"):
     llm_models.append("gpt-5-mini")
 if os.getenv("ANTHROPIC_API_KEY"):
@@ -64,7 +67,7 @@ print(f"✅ Embedding model selected: {embedding_model_name}")
 
 # unique experiment directory
 timestamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-run_tag = f"{timestamp}_weighted_fast"
+run_tag = f"{timestamp}_10gen_circle_packing_agent_env_light"
 
 evo_config = EvolutionConfig(
     task_sys_msg=search_task_sys_msg,
@@ -98,11 +101,16 @@ evo_config = EvolutionConfig(
     llm_dynamic_selection=None,  # e.g. "ucb1"
     # set embedding model
     embedding_model=embedding_model_name,
+    agent_full_context_mode=True,
+    agent_include_parent_context=False,
+    agent_leaderboard_correct_first=True,
+    agent_num_agents=2,
+    agent_local_leaderboard_rounds=2,
 )
 
 db_config = DatabaseConfig(
     db_path="evolution_db.sqlite",
-    num_islands=2,
+    num_islands=1,
     archive_size=20,
     elite_selection_ratio=0.3,
     num_archive_inspirations=4,
@@ -129,7 +137,7 @@ if __name__ == "__main__":
         os.chdir(circle_packing_path)
         print("changed working dir to:", circle_packing_path)
 
-    runner = EvolutionRunner(
+    runner = AgentEvolutionRunner(
         evo_config=evo_config,
         job_config=job_config,
         db_config=db_config,

@@ -177,3 +177,40 @@ Provide the complete new program code.
 
 IMPORTANT: Make sure your rewritten program maintains the same inputs and outputs as the original program, but with improved internal implementation.
 """
+
+# Variant used when we intentionally omit parent code/metrics from the prompt
+FULL_ITER_MSG_NO_CONTEXT = """#Previous Program Performance
+
+Here are the performance metrics of the program from the last iteration:
+
+{eval_feedback}{text_feedback_section}
+
+# Task
+
+You are improving the program iteratively (you will need to 
+propose a new program with the same inputs and outputs as other 
+programs in the conversation, but with improved internal implementation):
+
+Rewrite the program to improve its performance on the specified metrics.  You may use the previous program as inspiration, but do not copy it directly.
+Provide the complete new program code.
+
+IMPORTANT: Make sure your rewritten program maintains the same inputs and outputs as the original program, but with improved internal implementation.
+"""
+
+AGENT_ITER_MSG = """#Previous Program Performance
+
+Here are the performance metrics of the program from the last iteration:
+
+{eval_feedback}{text_feedback_section}
+
+# Task
+
+Iteratively improve the program. Keep the same inputs/outputs and respect EVOLVE-BLOCK markers.
+
+Use the agent action space:
+- One `/execute_action{{modify_full}}` or `/execute_action{{modify_diff}}` with TARGET_PROGRAM set to the program id from the leaderboard (names are shown for readability).
+- Include <NAME>, <DESCRIPTION>, and the code: full code fenced as ```{language} ...``` or SEARCH/REPLACE blocks fenced as ```diff ...```.
+- Retrieve or reflect actions are optional. Try to execute each action at least once to check if they are helpful.
+"""
+
+# Return exactly one modify_* action per reply.
