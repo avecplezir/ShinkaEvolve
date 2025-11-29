@@ -99,6 +99,11 @@
             fill: #444;
             pointer-events: none;
         }
+
+        .node.retrieval-node text {
+            font-weight: bold;
+            fill: #0f5f4b;
+        }
         
         .node:hover text {
             font-weight: bold;
@@ -109,6 +114,13 @@
             fill: none;
             stroke: #ddd;
             stroke-width: 1.5px;
+        }
+
+        .link-retrieval {
+            stroke: #16a085;
+            stroke-dasharray: 5 4;
+            stroke-width: 2px;
+            opacity: 0.9;
         }
         
         .link.best-path {
@@ -1691,9 +1703,9 @@
                         
                         const legend = document.getElementById('tree-legend');
                         if (tabId === 'tree-view') {
-                            if (window.treeData) {
+                            if (window.treeDataWithRetrievals || window.treeData) {
                                 legend.style.display = 'block';
-                                renderGraph(window.treeData);
+                                renderGraph(window.treeDataWithRetrievals || window.treeData);
                             }
                         } else {
                             legend.style.display = 'none';
@@ -3065,6 +3077,56 @@ ${'='.repeat(80)}
                 });
         }
 
+        function buildTreeDataWithRetrievals(programNodes) {
+            if (!Array.isArray(programNodes)) return [];
+
+            const baseNodes = programNodes.map(n => ({ ...n }));
+            const baseMap = new Map(baseNodes.map(n => [n.id, n]));
+            const augmented = [...baseNodes];
+
+            programNodes.forEach(program => {
+                const events = program.metadata?.retrieval_events;
+                if (!Array.isArray(events) || events.length === 0) return;
+
+                events.forEach((evt, idx) => {
+                    const targetId = evt.target_id;
+                    if (!targetId || !baseMap.has(targetId)) return; // Skip missing parents to keep the tree valid
+
+                    const targetNode = baseMap.get(targetId);
+                    const targetName = evt.target_name || targetNode?.metadata?.patch_name || targetId;
+                    const retrieverName = program.metadata?.patch_name || program.agent_name || program.id;
+                    const retrievalNodeId = `retrieve::${program.id}::${idx}`;
+
+                    augmented.push({
+                        id: retrievalNodeId,
+                        parent_id: targetId,
+                        generation: program.generation,
+                        timestamp: program.timestamp,
+                        agent_name: retrieverName,
+                        island_idx: program.island_idx ?? null,
+                        metadata: {
+                            patch_type: "retrieve",
+                            patch_name: `retrieve ${targetName}`,
+                            retrieval_event: {
+                                target_id: targetId,
+                                target_name: targetName,
+                                status: evt.status || "found",
+                                suggestions: evt.suggestions || [],
+                                retrieved_by: program.id,
+                                retrieved_by_name: retrieverName,
+                                retrieved_by_agent: program.metadata?.agent_name || program.agent_name || "unknown",
+                                generation: program.generation
+                            }
+                        },
+                        combined_score: null,
+                        correct: false
+                    });
+                });
+            });
+
+            return augmented;
+        }
+
         // Process the data and generate the tree
         function processData(data) {
             if (!data || data.length === 0) {
@@ -3093,6 +3155,7 @@ ${'='.repeat(80)}
                 });
                 // Ensure no virtual root nodes ever get into the global data
                 window.treeData = data.filter(d => !d.id || !d.id.includes('___virtual_root'));
+                window.treeDataWithRetrievals = buildTreeDataWithRetrievals(window.treeData);
                 
                 // Update views that are always visible or independent of the left tab
                 populateProgramsTable(data);
@@ -3128,7 +3191,7 @@ ${'='.repeat(80)}
                 // Now, render the correct left-hand view based on the stored activeLeftTabId
                 if (activeLeftTabId === 'tree-view') {
                     document.getElementById("tree-legend").style.display = "block";
-                    renderGraph(data);
+                    renderGraph(window.treeDataWithRetrievals || data);
                 } else {
                     document.getElementById("tree-legend").style.display = "none";
                     // Process the active view to improve performance
@@ -3236,7 +3299,13 @@ ${'='.repeat(80)}
                     console.log(`[DEBUG] Created unified root for ${gen0Programs.length} generation 0 programs`);
                 }
                 
-                const nodes = processedData.map(d => ({...d, agent_name: d.metadata.patch_name || d.agent_name || "unnamed_agent"}));
+                const nodes = processedData.map(d => {
+                    const isRetrievalNode = d.metadata?.patch_type === 'retrieve';
+                    const agentName = isRetrievalNode
+                        ? (d.metadata?.retrieval_event?.retrieved_by_agent || d.agent_name || "unnamed_agent")
+                        : (d.metadata?.patch_name || d.agent_name || "unnamed_agent");
+                    return { ...d, agent_name: agentName };
+                });
                 const nodeMap = new Map(nodes.map(node => [node.id, node]));
 
                 let hierarchyData = JSON.parse(JSON.stringify(nodes));
@@ -3287,6 +3356,9 @@ ${'='.repeat(80)}
                 
                 // Find the actual best score among correct nodes only
                 const correctValidNodes = nodes.filter(d => {
+                    if (d.metadata && d.metadata.patch_type === 'retrieve') {
+                        return false;
+                    }
                     const isCorrect = d.correct === true || d.correct === 'true' || d.correct === 1;
                     const hasValidScore = d.combined_score !== null && 
                                          d.combined_score !== undefined && 
@@ -3299,7 +3371,7 @@ ${'='.repeat(80)}
                 console.log("[DEBUG] Total correct valid nodes for scoring:", correctValidNodes.length);
                 
                 // Debug: show some examples of correct vs incorrect nodes
-                const allValidNodes = nodes.filter(d => d.combined_score !== null && d.combined_score !== undefined && !isNaN(d.combined_score));
+                const allValidNodes = nodes.filter(d => (d.metadata?.patch_type !== 'retrieve') && d.combined_score !== null && d.combined_score !== undefined && !isNaN(d.combined_score));
                 const incorrectNodes = allValidNodes.filter(d => !(d.correct === true || d.correct === 'true' || d.correct === 1));
                 console.log("[DEBUG] Total valid nodes:", allValidNodes.length, "Incorrect nodes:", incorrectNodes.length);
                 if (incorrectNodes.length > 0) {
@@ -3512,7 +3584,8 @@ ${'='.repeat(80)}
                     'init': d3.symbolDiamond,
                     'full': d3.symbolCircle,
                     'diff': d3.symbolSquare,
-                    'cross': d3.symbolCross
+                    'cross': d3.symbolCross,
+                    'retrieve': d3.symbolTriangle
                 };
                 const getShape = (patchType) => shapeMap[patchType] || d3.symbolCircle;
                 const symbol = d3.symbol().size(2500);
@@ -3555,9 +3628,16 @@ ${'='.repeat(80)}
                     .selectAll("path")
                     .data(visibleLinks)
                     .enter().append("path")
-                    .attr("class", "link")
+                    .attr("class", d => {
+                        const isRetrievalLink = d.target.data.metadata?.patch_type === 'retrieve';
+                        return isRetrievalLink ? "link link-retrieval" : "link";
+                    })
                     .attr("fill", "none")
                     .style("stroke", d => {
+                        const isRetrievalLink = d.target.data.metadata?.patch_type === 'retrieve';
+                        if (isRetrievalLink) {
+                            return '#16a085';
+                        }
                         // Check if this link is on the SINGLE best path
                         if (window.allBestPaths && window.allBestPaths.length > 0) {
                             // FORCE SINGLE PATH: Only check the first path
@@ -3577,6 +3657,10 @@ ${'='.repeat(80)}
                         return "#999"; // Default color for non-best paths
                     })
                     .style("stroke-width", d => {
+                        const isRetrievalLink = d.target.data.metadata?.patch_type === 'retrieve';
+                        if (isRetrievalLink) {
+                            return 2;
+                        }
                         // Check if this link is on any best path
                         if (window.allBestPaths && window.allBestPaths.length > 0) {
                             for (let path of window.allBestPaths) {
@@ -3588,6 +3672,10 @@ ${'='.repeat(80)}
                         return 1.5; // Default width
                     })
                     .style("stroke-opacity", d => {
+                        const isRetrievalLink = d.target.data.metadata?.patch_type === 'retrieve';
+                        if (isRetrievalLink) {
+                            return 0.9;
+                        }
                         // Check if this link is on any best path
                         if (window.allBestPaths && window.allBestPaths.length > 0) {
                             for (let path of window.allBestPaths) {
@@ -3607,7 +3695,16 @@ ${'='.repeat(80)}
                 
                 const node = g.append("g").attr("class", "nodes").selectAll("g").data(visibleNodes)
                     .enter().append("g")
-                    .attr("class", d => d.data.id === window.bestNodeId ? "node best-node" : "node")
+                    .attr("class", d => {
+                        const classes = ["node"];
+                        if (d.data.metadata?.patch_type === 'retrieve') {
+                            classes.push("retrieval-node");
+                        }
+                        if (d.data.id === window.bestNodeId) {
+                            classes.push("best-node");
+                        }
+                        return classes.join(" ");
+                    })
                     .attr("transform", d => `translate(${d.x},${d.y})`)
                     .on('click', (event, d) => {
                         d3.selectAll('.node').classed('selected', false);
@@ -3618,6 +3715,10 @@ ${'='.repeat(80)}
 
                         // Update link styles - FORCE SINGLE PATH
                         link.style("stroke", l => {
+                                const isRetrievalLink = l.target.data.metadata?.patch_type === 'retrieve';
+                                if (isRetrievalLink) {
+                                    return '#16a085';
+                                }
                                 if (window.allBestPaths && window.allBestPaths.length > 0) {
                                     // FORCE SINGLE PATH: Only check the first path
                                     const singlePath = window.allBestPaths[0];
@@ -3634,6 +3735,10 @@ ${'='.repeat(80)}
                                 return "#999";
                             })
                             .style("stroke-width", l => {
+                                const isRetrievalLink = l.target.data.metadata?.patch_type === 'retrieve';
+                                if (isRetrievalLink) {
+                                    return 2;
+                                }
                                 // Check if this link is on any best path
                                 if (window.allBestPaths && window.allBestPaths.length > 0) {
                                     for (let path of window.allBestPaths) {
@@ -3647,6 +3752,10 @@ ${'='.repeat(80)}
                                 return onSelectedPath ? 5 : 1.5;
                             })
                             .style("stroke-opacity", l => {
+                                const isRetrievalLink = l.target.data.metadata?.patch_type === 'retrieve';
+                                if (isRetrievalLink) {
+                                    return 0.9;
+                                }
                                 // Check if this link is on any best path or selected path
                                 if (window.allBestPaths && window.allBestPaths.length > 0) {
                                     for (let path of window.allBestPaths) {
@@ -3662,6 +3771,10 @@ ${'='.repeat(80)}
                         // Update node styles - FORCE SINGLE PATH
                         node.selectAll('path')
                             .style("stroke", n => {
+                                const isRetrievalNode = n.data.metadata?.patch_type === 'retrieve';
+                                if (isRetrievalNode) {
+                                    return '#16a085';
+                                }
                                 if (window.allBestPaths && window.allBestPaths.length > 0) {
                                     // FORCE SINGLE PATH: Only check the first path
                                     const singlePath = window.allBestPaths[0];
@@ -3672,6 +3785,10 @@ ${'='.repeat(80)}
                                 return "#000"; // Default stroke
                             })
                             .style("stroke-width", n => {
+                                const isRetrievalNode = n.data.metadata?.patch_type === 'retrieve';
+                                if (isRetrievalNode) {
+                                    return 2;
+                                }
                                 // Check if this node is on any best path
                                 if (window.allBestPaths && window.allBestPaths.length > 0) {
                                     for (let path of window.allBestPaths) {
@@ -3703,6 +3820,8 @@ ${'='.repeat(80)}
                         const score = formatScore(d.data.combined_score);
                         const patchType = d.data.metadata.patch_type || 'N/A';
                         const islandIdx = d.data.island_idx !== null && d.data.island_idx !== undefined ? d.data.island_idx : 'N/A';
+                        const isRetrievalNode = patchType === 'retrieve';
+                        const retrievalEvent = d.data.metadata?.retrieval_event || {};
                         
                         if (d.data.isUnifiedRoot) {
                             tooltip.html(`
@@ -3710,6 +3829,13 @@ ${'='.repeat(80)}
                                 <strong>Type:</strong> Unified Root<br>
                                 <strong>Score:</strong> ${score}<br>
                                 <em>Common origin for all islands</em>
+                            `);
+                        } else if (isRetrievalNode) {
+                            tooltip.html(`
+                                <strong style="color: #16a085; font-size: 13px;">Retrieve</strong><br>
+                                <strong>Retrieved by:</strong> ${escapeHtml(retrievalEvent.retrieved_by_name || d.data.agent_name || 'unknown')}<br>
+                                <strong>Target:</strong> ${escapeHtml(retrievalEvent.target_name || 'unknown')}<br>
+                                <strong>Status:</strong> ${escapeHtml(retrievalEvent.status || 'unknown')}
                             `);
                         } else {
                             tooltip.html(`
@@ -3743,6 +3869,7 @@ ${'='.repeat(80)}
                         return symbol();
                     })
                     .style("fill", d => {
+                        if (d.data.metadata?.patch_type === 'retrieve') return '#e8f8f5';
                         if (d.data.isUnifiedRoot) return '#9b59b6'; // Purple for unified root
                         if (d.data.id === window.bestNodeId) return '#ffd700';
                         if (!d.data.correct) return '#e74c3c';
@@ -3753,6 +3880,7 @@ ${'='.repeat(80)}
                         return '#3498db';
                     })
                     .style("stroke", d => {
+                        if (d.data.metadata?.patch_type === 'retrieve') return '#16a085';
                         // Check if this node is on the SINGLE best path
                         if (window.allBestPaths && window.allBestPaths.length > 0) {
                             // FORCE SINGLE PATH: Only check the first path
@@ -3771,6 +3899,7 @@ ${'='.repeat(80)}
                         return "#000"; // Default stroke
                     })
                     .style("stroke-width", d => {
+                        if (d.data.metadata?.patch_type === 'retrieve') return 2;
                         // Check if this node is on any best path
                         if (window.allBestPaths && window.allBestPaths.length > 0) {
                             for (let path of window.allBestPaths) {
@@ -3815,9 +3944,11 @@ ${'='.repeat(80)}
                 node.append("text")
                     .attr("dy", "0.75em")
                     .attr("text-anchor", "middle")
-                    .style("font-size", "24px").style("font-weight", "bold").style("fill", "white")
+                    .style("font-size", d => d.data.metadata?.patch_type === 'retrieve' ? "18px" : "24px")
+                    .style("font-weight", "bold")
+                    .style("fill", d => d.data.metadata?.patch_type === 'retrieve' ? "#0f5f4b" : "white")
                     .style("pointer-events", "none")
-                    .text(d => d.data.generation);
+                    .text(d => d.data.metadata?.patch_type === 'retrieve' ? "R" : d.data.generation);
 
                 // Add island index indicator with background
                 const islandNodes = node.filter(d => d.data.island_idx !== null && d.data.island_idx !== undefined);
@@ -4331,15 +4462,27 @@ ${'='.repeat(80)}
             
             const agentName = data.metadata.patch_name || data.agent_name || "unnamed_agent";
             const score = data.combined_score;
+            const isRetrievalNode = data.metadata?.patch_type === 'retrieve';
+            const retrievalEvent = data.metadata?.retrieval_event;
             
             // Update node summary
-            document.getElementById("node-summary").innerHTML = `
-                <h3>${agentName} (Gen ${data.generation})</h3>
-                <p><strong>ID:</strong> <span style="font-family: monospace;">${data.id}</span></p>
-                <p><strong>Parent ID:</strong> <span style="font-family: monospace;">${data.parent_id || 'None'}</span></p>
-                <p><strong>Score:</strong> <span class="${getScoreClass(score)}">${formatScore(score)}</span></p>
-                ${data.error ? `<p><strong>Error:</strong> <span class="metric-bad">${data.error}</span></p>` : ''}
-            `;
+            if (isRetrievalNode && retrievalEvent) {
+                document.getElementById("node-summary").innerHTML = `
+                    <h3>Retrieve: ${escapeHtml(retrievalEvent.retrieved_by_name || agentName)}</h3>
+                    <p><strong>Target:</strong> <span style="font-family: monospace;">${escapeHtml(retrievalEvent.target_id || data.parent_id || 'unknown')}</span></p>
+                    <p><strong>Target Name:</strong> ${escapeHtml(retrievalEvent.target_name || 'unknown')}</p>
+                    <p><strong>Retrieved By:</strong> <span style="font-family: monospace;">${escapeHtml(retrievalEvent.retrieved_by || 'unknown')}</span></p>
+                    <p><strong>Status:</strong> ${escapeHtml(retrievalEvent.status || 'unknown')}</p>
+                `;
+            } else {
+                document.getElementById("node-summary").innerHTML = `
+                    <h3>${agentName} (Gen ${data.generation})</h3>
+                    <p><strong>ID:</strong> <span style="font-family: monospace;">${data.id}</span></p>
+                    <p><strong>Parent ID:</strong> <span style="font-family: monospace;">${data.parent_id || 'None'}</span></p>
+                    <p><strong>Score:</strong> <span class="${getScoreClass(score)}">${formatScore(score)}</span></p>
+                    ${data.error ? `<p><strong>Error:</strong> <span class="metric-bad">${data.error}</span></p>` : ''}
+                `;
+            }
             
 
 
@@ -5375,8 +5518,8 @@ ${'='.repeat(80)}
             }
             
             window.resizeTimeout = setTimeout(function() {
-                if (window.treeData) {
-                    renderGraph(window.treeData);
+                if (window.treeDataWithRetrievals || window.treeData) {
+                    renderGraph(window.treeDataWithRetrievals || window.treeData);
                 } else {
                     // Full reload only if necessary
                                     const resultSelect = document.getElementById('result-select');
@@ -5803,12 +5946,14 @@ ${'='.repeat(80)}
                 const treeTab = document.querySelector('.left-tab[data-tab="tree-view"]');
                 if (treeTab && !treeTab.classList.contains('active')) {
                     treeTab.click();
-                } else if (window.treeData) {
-                    renderGraph(window.treeData);
+                } else if (window.treeDataWithRetrievals || window.treeData) {
+                    renderGraph(window.treeDataWithRetrievals || window.treeData);
                 }
             } else {
                 // Don't switch tab, just show details
-                const nodeData = window.treeData.find(d => d.id === nodeId);
+                const nodeData =
+                    (window.treeData && window.treeData.find(d => d.id === nodeId)) ||
+                    (window.treeDataWithRetrievals && window.treeDataWithRetrievals.find(d => d.id === nodeId));
                 if (!nodeData) {
                     console.warn("[DEBUG] Could not find node data for ID:", nodeId);
                     return;

@@ -1,5 +1,6 @@
 import logging
 import re
+from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 from pathlib import Path
 
@@ -144,6 +145,9 @@ class AgentEnv:
         self.evo_config = evo_config
         self.get_code_embedding = get_code_embedding_cb
         self.action_engine = ActionEngine()
+        # Keep retrievals that occurred on retrieve-only turns until
+        # the next submitted program so they can be stored in metadata.
+        self.pending_retrieval_events: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
 
     def _hamming_distance(self, a: str, b: str) -> int:
         if len(a) != len(b):
@@ -190,6 +194,8 @@ class AgentEnv:
         exec_fname: str,
         results_dir: str,
         llm_kwargs: dict,
+        agent_id: Optional[str] = None,
+        agent_name: Optional[str] = None,
     ):
         """
         Execute actions parsed from the LLM response.
@@ -231,6 +237,7 @@ class AgentEnv:
             )
 
         obs_blocks: List[str] = []
+        agent_key = str(agent_id) if agent_id is not None else "default"
         running_job = None
         meta_patch_data = {}
         code_diff = None
@@ -348,6 +355,7 @@ class AgentEnv:
 
         # Handle retrieve actions (if any)
         retrieves = self.action_engine.get_retrieves(actions)
+        retrieval_events: List[Dict[str, Any]] = []
         if retrieves:
             retrieved_blocks = []
             for r in retrieves:
@@ -378,6 +386,16 @@ class AgentEnv:
                         action_log.append(
                             f"retrieve target={target_id} status=found name={display_name} score={prog_score} agent={prog_agent}"
                         )
+                        retrieval_events.append(
+                            {
+                                "target_id": prog.id,
+                                "target_name": display_name,
+                                "target_agent": prog_agent,
+                                "status": "found",
+                                "retrieved_by": parent_program.id if parent_program else None,
+                                "retrieved_by_agent": agent_name,
+                            }
+                        )
                     else:
                         suggestions = self._suggest_program_ids(target_id)
                         if suggestions:
@@ -388,13 +406,39 @@ class AgentEnv:
                             retrieved_blocks.append(
                                 f"Program {target_id} not found. Did you mean: {suggestion_text}."
                             )
+                            suggestion_ids = [sid for _, sid, _, _, _ in suggestions]
                             action_log.append(
-                                f"retrieve target={target_id} status=not_found suggestions={[sid for _, sid, _, _, _ in suggestions]}"
+                                f"retrieve target={target_id} status=not_found suggestions={suggestion_ids}"
+                            )
+                            retrieval_events.append(
+                                {
+                                    "target_id": target_id,
+                                    "status": "not_found",
+                                    "suggestions": suggestion_ids,
+                                    "retrieved_by": parent_program.id if parent_program else None,
+                                    "retrieved_by_agent": agent_name,
+                                }
                             )
                         else:
                             retrieved_blocks.append(f"Program {target_id} not found.")
                             action_log.append(f"retrieve target={target_id} status=not_found")
+                            retrieval_events.append(
+                                {
+                                    "target_id": target_id,
+                                    "status": "not_found",
+                                    "retrieved_by": parent_program.id if parent_program else None,
+                                    "retrieved_by_agent": agent_name,
+                                }
+                            )
             obs_blocks.append("Retrieved programs:\n\n" + "\n\n".join(retrieved_blocks))
+
+        if retrieval_events:
+            meta_patch_data.setdefault("retrieval_events", [])
+            meta_patch_data["retrieval_events"].extend(retrieval_events)
+            # If no job is submitted this turn, keep them until the next submit.
+            # They will be attached to the next modify_* submission for this agent.
+            if not running_job:
+                self.pending_retrieval_events[agent_key].extend(retrieval_events)
 
         # Handle reflect actions (if any) without augmenting the observation
         reflects = self.action_engine.get_reflects(actions)
@@ -408,5 +452,13 @@ class AgentEnv:
                     "or modify_diff action with code."
                 )
             )
+
+        # When a job is created, merge any pending retrievals for this agent
+        if running_job:
+            pending = self.pending_retrieval_events.get(agent_key, [])
+            if pending:
+                meta_patch_data.setdefault("retrieval_events", [])
+                meta_patch_data["retrieval_events"] = pending + meta_patch_data["retrieval_events"]
+                self.pending_retrieval_events[agent_key] = []
 
         return "\n\n".join(obs_blocks), running_job, meta_patch_data, code_diff, extra_cost, action_log

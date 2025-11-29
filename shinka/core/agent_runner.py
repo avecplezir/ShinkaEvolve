@@ -281,6 +281,8 @@ class AgentEvolutionRunner(EvolutionRunner):
                 exec_fname=exec_fname,
                 results_dir=results_dir,
                 llm_kwargs=llm_kwargs,
+                agent_id=agent_idx,
+                agent_name=self.agent_names[agent_idx],
             )
             self._update_action_counts(action_log, agent_idx)
             total_api_cost += extra_cost
