@@ -67,6 +67,7 @@ class EvolutionConfig:
     agent_num_agents: int = 1
     agent_leaderboard_correct_first: bool = False
     agent_local_leaderboard_rounds: int = 5
+    agent_names: Optional[List[str]] = None
 
 
 @dataclass

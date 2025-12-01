@@ -3948,7 +3948,7 @@ ${'='.repeat(80)}
                     .style("font-weight", "bold")
                     .style("fill", d => d.data.metadata?.patch_type === 'retrieve' ? "#0f5f4b" : "white")
                     .style("pointer-events", "none")
-                    .text(d => d.data.metadata?.patch_type === 'retrieve' ? "R" : d.data.generation);
+                    .text(d => d.data.generation);
 
                 // Add island index indicator with background
                 const islandNodes = node.filter(d => d.data.island_idx !== null && d.data.island_idx !== undefined);
@@ -3976,10 +3976,10 @@ ${'='.repeat(80)}
                     .style("fill", "white")
                     .style("pointer-events", "none")
                     .text(d => {
-                        const an = d.data.metadata?.agent_name;
-                        if (an) {
-                            return an.slice(0, 3);
-                        }
+                        const isRetrieval = d.data.metadata?.patch_type === 'retrieve';
+                        const retrievalAgent = d.data.metadata?.retrieval_event?.retrieved_by_agent;
+                        const an = d.data.metadata?.agent_name || retrievalAgent || d.data.agent_name;
+                        if (an) return an.slice(0, 3);
                         return `I${d.data.island_idx}`;
                     });
 

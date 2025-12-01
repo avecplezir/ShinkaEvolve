@@ -3,7 +3,7 @@ import os
 import datetime as dt
 from time import perf_counter
 import sys
-from shinka.core import EvolutionRunner, EvolutionConfig, AgentEvolutionRunner
+from shinka.core import EvolutionRunner, EvolutionConfig
 from shinka.database import DatabaseConfig
 from shinka.launch import LocalJobConfig
 
@@ -42,9 +42,9 @@ search_task_sys_msg = (
 # pick llms based on available keys
 llm_models = []
 if os.getenv("GEMINI_API_KEY"):
-    # llm_models.append("gemini-2.5-flash")
+    llm_models.append("gemini-2.5-flash")
     # llm_models.append("gemini-2.5-flash-lite")
-    llm_models.append("gemini-2.5-pro")
+    # llm_models.append("gemini-2.5-pro")
     # llm_models.append("gemini-2.0-flash")
 if os.getenv("OPENAI_API_KEY"):
     llm_models.append("gpt-5-mini")
@@ -67,46 +67,7 @@ print(f"✅ Embedding model selected: {embedding_model_name}")
 
 # unique experiment directory
 timestamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-run_tag = f"{timestamp}_10gen_circle_packing_agent_env_light"
-
-# evo_config = EvolutionConfig(
-#     task_sys_msg=search_task_sys_msg,
-#     # use all three mutation patch types and set prob for all
-#     patch_types=["diff", "full", "cross"],
-#     patch_type_probs=[0.6, 0.3, 0.1],
-#     # runs for 20 generations in sequence
-#     num_generations=20,
-#     max_parallel_jobs=1,  # only one job at a time
-#     max_patch_resamples=3,  # resample 3 times if patch fails
-#     max_patch_attempts=3,  # try 3 times to fix patch via reflection
-#     # runs locally using the local environment (no loading of conda/docker)
-#     job_type="local",
-#     language="python",
-#     # set LLMs for ensemble
-#     llm_models=llm_models,
-#     llm_kwargs=dict(
-#         temperatures=[0.0, 0.5],  # uniform temperature sampling
-#         max_tokens=16384,
-#     ),
-#     # no meta scratchpad
-#     meta_rec_interval=None,  # e.g. every 5 generations
-#     meta_llm_models=None,  # e.g. ["gpt-4.1"]
-#     meta_llm_kwargs={},  # same as above
-#     # Set path to initial program relative to repo root
-#     init_program_path="initial.py",
-#     results_dir=f"results/circle_packing/{run_tag}",
-#     # each mutation has three chances of providing a novel solution
-#     max_novelty_attempts=3,
-#     # ensemble llm selection among candidates based on past performance
-#     llm_dynamic_selection=None,  # e.g. "ucb1"
-#     # set embedding model
-#     embedding_model=embedding_model_name,
-#     agent_full_context_mode=True,
-#     agent_include_parent_context=False,
-#     agent_leaderboard_correct_first=True,
-#     agent_num_agents=2,
-#     agent_local_leaderboard_rounds=2,
-# )
+run_tag = f"{timestamp}_20gen_circle_packing_shinka_s2"
 
 evo_config = EvolutionConfig(
     task_sys_msg=search_task_sys_msg,
@@ -114,7 +75,7 @@ evo_config = EvolutionConfig(
     patch_types=["diff", "full", "cross"],
     patch_type_probs=[0.6, 0.3, 0.1],
     # runs for 20 generations in sequence
-    num_generations=40,
+    num_generations=20,
     max_parallel_jobs=1,  # only one job at a time
     max_patch_resamples=3,  # resample 3 times if patch fails
     max_patch_attempts=3,  # try 3 times to fix patch via reflection
@@ -133,27 +94,19 @@ evo_config = EvolutionConfig(
     meta_llm_kwargs={},  # same as above
     # Set path to initial program relative to repo root
     init_program_path="initial.py",
-    results_dir=f"results/circle_packing/best_continue_pro",
+    results_dir=f"results/circle_packing/{run_tag}",
     # each mutation has three chances of providing a novel solution
     max_novelty_attempts=3,
     # ensemble llm selection among candidates based on past performance
     llm_dynamic_selection=None,  # e.g. "ucb1"
     # set embedding model
     embedding_model=embedding_model_name,
-    agent_full_context_mode=True,
-    agent_include_parent_context=False,
-    agent_leaderboard_correct_first=True,
-    agent_num_agents=2,
-    agent_local_leaderboard_rounds=5,
-    agent_names=["Mandana", "Nishanth"],
 )
-
-# ["Mandana", "Nishanth"]
 
 db_config = DatabaseConfig(
     db_path="evolution_db.sqlite",
-    num_islands=1,
-    archive_size=100,
+    num_islands=2,
+    archive_size=20,
     elite_selection_ratio=0.3,
     num_archive_inspirations=4,
     num_top_k_inspirations=2,
@@ -179,7 +132,7 @@ if __name__ == "__main__":
         os.chdir(circle_packing_path)
         print("changed working dir to:", circle_packing_path)
 
-    runner = AgentEvolutionRunner(
+    runner = EvolutionRunner(
         evo_config=evo_config,
         job_config=job_config,
         db_config=db_config,

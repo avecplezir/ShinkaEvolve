@@ -37,6 +37,11 @@ class AgentEvolutionRunner(EvolutionRunner):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        # If the database already has programs, mark this runner as resuming.
+        try:
+            self.resuming_run = self.db._count_programs_in_db() > 1
+        except Exception:
+            self.resuming_run = False
         self.agent_env = AgentEnv(
             db=self.db,
             scheduler=self.scheduler,
@@ -46,10 +51,8 @@ class AgentEvolutionRunner(EvolutionRunner):
             get_code_embedding_cb=self.get_code_embedding,
         )
         self.num_agents = self.evo_config.agent_num_agents
-        self.agent_msg_histories: List[List[dict[str, Any]]] = [
-            [] for _ in range(self.num_agents)
-        ]
-        self.agent_names = [
+        override_names = getattr(self.evo_config, "agent_names", None) or []
+        base_agent_names = [
             "Atlas",
             "Nova",
             "Orion",
@@ -60,7 +63,17 @@ class AgentEvolutionRunner(EvolutionRunner):
             "Ridge",
             "Quill",
             "Sable",
-        ][: self.num_agents]
+        ]
+        agent_pool = list(override_names) if override_names else base_agent_names
+        if len(agent_pool) < self.num_agents:
+            raise ValueError(
+                f"agent_names must provide at least {self.num_agents} entries "
+                f"(got {len(agent_pool)})."
+            )
+        self.agent_names = agent_pool[: self.num_agents]
+        self.agent_msg_histories: List[List[dict[str, Any]]] = [
+            [] for _ in range(self.num_agents)
+        ]
         assert (
             len(self.agent_names) >= self.num_agents
         ), f"Not enough agent names for {self.num_agents} agents."
@@ -75,6 +88,8 @@ class AgentEvolutionRunner(EvolutionRunner):
             for _ in range(self.num_agents)
         ]
         self.last_summarize_gen = [-1 for _ in range(self.num_agents)]
+        # Track how many submissions each agent has made to gate local leaderboard view
+        self.agent_local_rounds: List[int] = [0 for _ in range(self.num_agents)]
 
     def _update_action_counts(self, action_log: List[str], agent_idx: int) -> None:
         """Increment counters based on the action log entries."""
@@ -178,7 +193,7 @@ class AgentEvolutionRunner(EvolutionRunner):
 
         agent_idx = current_gen % self.num_agents
         history = self.agent_msg_histories[agent_idx]
-        allow_push = current_gen >= 5 * self.num_agents
+        allow_push = self.agent_local_rounds[agent_idx] >= 5
 
         if not history:
             logger.info(f"Configuring the first obs for LLM for {agent_idx} agent.")
@@ -347,6 +362,8 @@ class AgentEvolutionRunner(EvolutionRunner):
             novelty_cost=novelty_cost,
         )
         self.running_jobs.append(running_job)
+        # Increment this agent's local round counter now that it has submitted
+        self.agent_local_rounds[agent_idx] += 1
         if self.verbose:
             logger.info(
                 f"Submitted agent-mode job for generation {current_gen}, "
@@ -406,25 +423,25 @@ class AgentEvolutionRunner(EvolutionRunner):
         # Build leaderboard block
         leaderboard = self.db.get_top_programs(n=10_000, correct_only=False) # get all programs
         # For early steps, show local leaderboard for this agent only
-        local_rounds = max(
-            0, getattr(self.evo_config, "agent_local_leaderboard_rounds", 5)
-        )
-        local_window = local_rounds * self.num_agents
-        if current_gen < local_window and self.num_agents > 1:
+        local_rounds = self.evo_config.agent_local_leaderboard_rounds
+        current_agent_round = self.agent_local_rounds[agent_idx]
+        logger.info(f"local_rounds: {local_rounds} current_agent_round: {current_agent_round}")
+        if current_agent_round <= local_rounds:
+            logger.info("Showing local leaderboard for this agent only.")
             leaderboard = [
                 prog
                 for prog in leaderboard
                 if prog.metadata and prog.metadata.get("agent_name") == agent_name
-            ] or leaderboard
+            ]
             # Always include gen0 programs
             gen0_progs = self.db.get_programs_by_generation(0)
             if gen0_progs:
                 existing_ids = {p.id for p in leaderboard}
                 leaderboard.extend([p for p in gen0_progs if p.id not in existing_ids])
         else:
-            if self.num_agents > 1:
+            if self.num_agents > 1 or self.resuming_run:
                 peer_note = (
-                    f"\nThere are {self.num_agents} agents working in parallel; Now the leaderboard shows all agents' submissions."
+                    f"\nNow the leaderboard shows all agents' submissions."
                     "\nUse /execute_action{retrieve} to inspect other agents' programs you have not read yet and borrow ideas when useful."
                     "\nKeep your own plan, but if another agent's program is inspiring, you can set TARGET_PROGRAM to that id in your next modify_full or modify_diff."
                 )
